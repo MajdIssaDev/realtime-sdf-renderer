@@ -13,6 +13,7 @@ const float HIT_EPS            = 0.0005;
 const float SMIN_BLEND_K       = 0.5;
 
 const vec3  kMaterialColor = vec3(0.85, 0.35, 0.25);
+const vec3  kSkyColor      = vec3(0.08, 0.10, 0.16);
 const vec3  kLightDir      = normalize(vec3(-0.6, 1.0, 0.4));
 const vec3  kLightColor    = vec3(1.0);
 
@@ -107,7 +108,25 @@ float getSoftShadow(vec3 ro, vec3 rd)
     return clamp(res, 0.0, 1.0);
 }
 
-vec3 blinnPhong(vec3 normal, vec3 viewDir, vec3 baseColor, float shadow)
+float getAO(vec3 p, vec3 n)
+{
+    float occ = 0.0;
+    float sca = 1.0;
+
+    for (int i = 0; i < 5; i++)
+    {
+        float h = 0.02 + 0.12 * float(i) / 4.0;
+        vec3 samplePos = p + n * h;
+        float d = mapScene(samplePos);
+
+        occ += (h - d) * sca;
+        sca *= 0.95;
+    }
+
+    return clamp(1.0 - 2.0 * occ, 0.0, 1.0);
+}
+
+vec3 blinnPhong(vec3 normal, vec3 viewDir, vec3 baseColor, float shadow, float ao)
 {
     vec3 N = normalize(normal);
     vec3 L = kLightDir;
@@ -117,8 +136,8 @@ vec3 blinnPhong(vec3 normal, vec3 viewDir, vec3 baseColor, float shadow)
     float diffuse = max(dot(N, L), 0.0);
     float spec    = pow(max(dot(N, H), 0.0), kShininess);
 
-    vec3 ambient  = kAmbientStrength  * kLightColor;
-    vec3 diffuseC = kDiffuseStrength  * diffuse * kLightColor * shadow;
+    vec3 ambient  = kAmbientStrength  * kLightColor * ao;
+    vec3 diffuseC = kDiffuseStrength  * diffuse * kLightColor * shadow * mix(0.75, 1.0, ao);
     vec3 specular = kSpecularStrength * spec    * kLightColor * shadow;
 
     vec3 intensity = ambient + diffuseC + specular;
@@ -167,11 +186,19 @@ void main()
         vec3 normal = getNormal(hitPos);
         vec3 shadowOrigin = hitPos + normal * SHADOW_BIAS;
         float shadow = getSoftShadow(shadowOrigin, kLightDir);
-        vec3 finalColor = blinnPhong(normal, -rd, kMaterialColor, shadow);
+        float ao = getAO(hitPos, normal);
+        vec3 finalColor = blinnPhong(normal, -rd, kMaterialColor, shadow, ao);
+
+        const float fogDensity = 0.035;
+        float fogFactor = clamp(1.0 - exp(-fogDensity * t), 0.0, 1.0);
+        finalColor = mix(finalColor, kSkyColor, fogFactor);
+
         FragColor = vec4(clamp(finalColor, 0.0, 1.0), 1.0);
     }
     else
     {
-        FragColor = vec4(0.08, 0.09, 0.14, 1.0);
+        float sky = clamp(0.5 + 0.5 * rd.y, 0.0, 1.0);
+        vec3 bg = mix(kSkyColor * 0.75, kSkyColor, sky);
+        FragColor = vec4(bg, 1.0);
     }
 }
