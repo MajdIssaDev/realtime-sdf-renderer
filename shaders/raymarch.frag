@@ -4,6 +4,10 @@ in vec2 uv;
 out vec4 FragColor;
 
 uniform float u_time;
+uniform vec3 u_cameraPos;
+uniform vec3 u_cameraFront;
+uniform vec3 u_cameraUp;
+uniform vec2 u_resolution;
 
 float sdSphere(vec3 p, float radius)
 {
@@ -17,13 +21,18 @@ float mapScene(vec3 p)
 
 void main()
 {
-    const float aspect = 16.0 / 9.0;
+    const float focalLength = 1.5;
 
-    vec2 ndc = uv * 2.0 - 1.0;
-    ndc.x *= aspect;
+    vec3 ro = u_cameraPos;
+    vec3 forward = normalize(u_cameraFront);
+    vec3 right = normalize(cross(forward, u_cameraUp));
+    vec3 up = normalize(cross(right, forward));
 
-    vec3 ro = vec3(0.0, 0.0, 0.0);
-    vec3 rd = normalize(vec3(ndc, -1.0));
+    vec2 pixelUV = gl_FragCoord.xy / u_resolution;
+    vec2 ndc = pixelUV * 2.0 - 1.0;
+    ndc.x *= u_resolution.x / u_resolution.y;
+
+    vec3 rd = normalize(ndc.x * right + ndc.y * up + focalLength * forward);
 
     float t = 0.0;
     bool hit = false;
