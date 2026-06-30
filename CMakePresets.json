@@ -1,0 +1,26 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "vs-vcpkg",
+      "displayName": "Visual Studio + vcpkg",
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "vs-vcpkg-debug",
+      "configurePreset": "vs-vcpkg",
+      "configuration": "Debug"
+    },
+    {
+      "name": "vs-vcpkg-release",
+      "configurePreset": "vs-vcpkg",
+      "configuration": "Release"
+    }
+  ]
+}
