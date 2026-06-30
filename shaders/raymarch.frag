@@ -9,20 +9,44 @@ uniform vec3 u_cameraFront;
 uniform vec3 u_cameraUp;
 uniform vec2 u_resolution;
 
-const float HIT_EPS            = 0.0005;
-const float SMIN_BLEND_K       = 0.5;
+uniform vec3  u_sphereColor;
+uniform float u_sphereRoughness;
+uniform float u_sphereSpecular;
+uniform float u_sphereMetalness;
 
-const vec3  kMaterialColor = vec3(0.85, 0.35, 0.25);
-const vec3  kSkyColor      = vec3(0.08, 0.10, 0.16);
-const vec3  kLightDir      = normalize(vec3(-0.6, 1.0, 0.4));
-const vec3  kLightColor    = vec3(1.0);
+uniform vec3  u_boxColor;
+uniform float u_boxRoughness;
+uniform float u_boxSpecular;
+uniform float u_boxMetalness;
 
-const float kAmbientStrength  = 0.15;
-const float kDiffuseStrength  = 0.75;
-const float kSpecularStrength = 0.35;
-const float kShininess        = 64.0;
+uniform int u_selectedObjectID;
 
-const float SHADOW_BIAS       = 0.02;
+struct Surface {
+    float dist;
+    float matID;
+    float blendH;
+};
+
+struct MaterialProps {
+    vec3  baseColor;
+    float ambient;
+    float diffuse;
+    float specular;
+    float shininess;
+};
+
+const float HIT_EPS      = 0.0005;
+const float SMIN_BLEND_K = 0.5;
+
+const float MAT_SPHERE = 1.0;
+const float MAT_BOX    = 2.0;
+const float MAT_FLOOR  = 3.0;
+
+const vec3 kSkyColor   = vec3(0.08, 0.10, 0.16);
+const vec3 kLightDir   = normalize(vec3(-0.6, 1.0, 0.4));
+const vec3 kLightColor = vec3(1.0);
+
+const float SHADOW_BIAS = 0.02;
 
 float sdBox(vec3 p, vec3 b)
 {
@@ -35,10 +59,11 @@ float sdPlane(vec3 p, float h)
     return p.y - h;
 }
 
-float smin(float a, float b, float k)
+vec2 sminWithFactor(float a, float b, float k)
 {
-    float h = max(k - abs(a - b), 0.0) / k;
-    return min(a, b) - h * h * h * k * (1.0 / 6.0);
+    float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+    float d = mix(b, a, h) - k * h * (1.0 - h);
+    return vec2(d, h);
 }
 
 void sceneDistances(vec3 p, out float boxDist, out float sphereDist, out float floorDist)
@@ -55,18 +80,23 @@ void sceneDistances(vec3 p, out float boxDist, out float sphereDist, out float f
     floorDist  = sdPlane(p, -1.0);
 }
 
-float mapObject(vec3 p)
+Surface mapObjectSurface(vec3 p)
 {
     float boxDist, sphereDist, floorDist;
     sceneDistances(p, boxDist, sphereDist, floorDist);
-    return smin(boxDist, sphereDist, SMIN_BLEND_K);
+
+    vec2 blended = sminWithFactor(boxDist, sphereDist, SMIN_BLEND_K);
+    float matID = (boxDist < sphereDist) ? MAT_BOX : MAT_SPHERE;
+
+    return Surface(blended.x, matID, blended.y);
 }
 
-float mapScene(vec3 p)
+Surface map(vec3 p)
 {
-    float boxDist, sphereDist, floorDist;
-    sceneDistances(p, boxDist, sphereDist, floorDist);
-    return min(smin(boxDist, sphereDist, SMIN_BLEND_K), floorDist);
+    Surface objectSurf = mapObjectSurface(p);
+    Surface floorSurf  = Surface(sdPlane(p, -1.0), MAT_FLOOR, 0.0);
+
+    return (objectSurf.dist < floorSurf.dist) ? objectSurf : floorSurf;
 }
 
 vec3 getNormal(vec3 p)
@@ -74,10 +104,10 @@ vec3 getNormal(vec3 p)
     const float h = 0.0005;
     const vec2 k = vec2(1.0, -1.0);
     return normalize(
-        k.xyy * mapScene(p + k.xyy * h) +
-        k.yyx * mapScene(p + k.yyx * h) +
-        k.yxy * mapScene(p + k.yxy * h) +
-        k.xxx * mapScene(p + k.xxx * h)
+        k.xyy * map(p + k.xyy * h).dist +
+        k.yyx * map(p + k.yyx * h).dist +
+        k.yxy * map(p + k.yxy * h).dist +
+        k.xxx * map(p + k.xxx * h).dist
     );
 }
 
@@ -89,7 +119,7 @@ float getSoftShadow(vec3 ro, vec3 rd)
     for (int i = 0; i < 64; ++i)
     {
         vec3 p = ro + rd * t;
-        float h = mapObject(p);
+        float h = mapObjectSurface(p).dist;
 
         if (h < 0.001)
         {
@@ -117,7 +147,7 @@ float getAO(vec3 p, vec3 n)
     {
         float h = 0.02 + 0.12 * float(i) / 4.0;
         vec3 samplePos = p + n * h;
-        float d = mapScene(samplePos);
+        float d = map(samplePos).dist;
 
         occ += (h - d) * sca;
         sca *= 0.95;
@@ -126,7 +156,30 @@ float getAO(vec3 p, vec3 n)
     return clamp(1.0 - 2.0 * occ, 0.0, 1.0);
 }
 
-vec3 blinnPhong(vec3 normal, vec3 viewDir, vec3 baseColor, float shadow, float ao)
+MaterialProps getMaterial(float matID, vec3 p, float blendH)
+{
+    if (matID == MAT_FLOOR)
+    {
+        bool cx = fract(p.x) > 0.5;
+        bool cz = fract(p.z) > 0.5;
+        vec3 checker = (cx != cz) ? vec3(0.95) : vec3(0.05);
+        return MaterialProps(checker, 0.20, 0.70, 0.10, 32.0);
+    }
+
+    vec3 activeColor      = mix(u_sphereColor, u_boxColor, blendH);
+    float activeRoughness = mix(u_sphereRoughness, u_boxRoughness, blendH);
+    float activeSpecular  = mix(u_sphereSpecular,  u_boxSpecular,  blendH);
+    float activeMetalness = mix(u_sphereMetalness, u_boxMetalness, blendH);
+
+    float shininess = mix(1.0, 128.0, 1.0 - activeRoughness);
+    float diffuseStrength  = mix(0.85, 0.05, activeMetalness);
+    float ambientStrength  = mix(0.15, 0.10 + 0.35 * activeMetalness, activeMetalness);
+    float specularStrength = activeSpecular * (1.0 + activeMetalness);
+
+    return MaterialProps(activeColor, ambientStrength, diffuseStrength, specularStrength, shininess);
+}
+
+vec3 blinnPhong(vec3 normal, vec3 viewDir, MaterialProps mat, float shadow, float ao)
 {
     vec3 N = normalize(normal);
     vec3 L = kLightDir;
@@ -134,14 +187,13 @@ vec3 blinnPhong(vec3 normal, vec3 viewDir, vec3 baseColor, float shadow, float a
     vec3 H = normalize(L + V);
 
     float diffuse = max(dot(N, L), 0.0);
-    float spec    = pow(max(dot(N, H), 0.0), kShininess);
+    float spec    = pow(max(dot(N, H), 0.0), mat.shininess);
 
-    vec3 ambient  = kAmbientStrength  * kLightColor * ao;
-    vec3 diffuseC = kDiffuseStrength  * diffuse * kLightColor * shadow * mix(0.75, 1.0, ao);
-    vec3 specular = kSpecularStrength * spec    * kLightColor * shadow;
+    vec3 ambient  = mat.ambient  * kLightColor * ao;
+    vec3 diffuseC = mat.diffuse  * diffuse * kLightColor * shadow * mix(0.75, 1.0, ao);
+    vec3 specular = mat.specular * spec    * kLightColor * shadow;
 
-    vec3 intensity = ambient + diffuseC + specular;
-    return clamp(baseColor * intensity, 0.0, 1.0);
+    return clamp(mat.baseColor * (ambient + diffuseC + specular), 0.0, 1.0);
 }
 
 void main()
@@ -165,7 +217,7 @@ void main()
     for (int i = 0; i < 100; ++i)
     {
         vec3 p = ro + rd * t;
-        float d = mapScene(p);
+        float d = map(p).dist;
 
         if (d < HIT_EPS)
         {
@@ -183,11 +235,38 @@ void main()
     if (hit)
     {
         vec3 hitPos = ro + rd * max(t - HIT_EPS, 0.0);
+        Surface hitSurf = map(hitPos);
         vec3 normal = getNormal(hitPos);
         vec3 shadowOrigin = hitPos + normal * SHADOW_BIAS;
         float shadow = getSoftShadow(shadowOrigin, kLightDir);
         float ao = getAO(hitPos, normal);
-        vec3 finalColor = blinnPhong(normal, -rd, kMaterialColor, shadow, ao);
+        MaterialProps mat = getMaterial(hitSurf.matID, hitPos, hitSurf.blendH);
+        vec3 finalColor = blinnPhong(normal, -rd, mat, shadow, ao);
+
+        if (u_selectedObjectID != 0 && hitSurf.matID != MAT_FLOOR)
+        {
+            float boxDist, sphereDist, floorDist;
+            sceneDistances(hitPos, boxDist, sphereDist, floorDist);
+
+            bool belongsToSelection = false;
+            if (u_selectedObjectID == 1)
+            {
+                belongsToSelection = sphereDist <= boxDist;
+            }
+            else if (u_selectedObjectID == 2)
+            {
+                belongsToSelection = boxDist <= sphereDist;
+            }
+
+            if (belongsToSelection)
+            {
+                float fresnel = pow(1.0 - max(dot(normal, -rd), 0.0), 2.5);
+                vec3 highlightColor = vec3(1.0, 0.92, 0.35);
+                float pulse = 0.55 + 0.45 * sin(u_time * 4.0);
+                finalColor = mix(finalColor, highlightColor, fresnel * 0.35 * pulse);
+                finalColor += highlightColor * fresnel * 0.12 * pulse;
+            }
+        }
 
         const float fogDensity = 0.035;
         float fogFactor = clamp(1.0 - exp(-fogDensity * t), 0.0, 1.0);
