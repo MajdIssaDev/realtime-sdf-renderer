@@ -13,6 +13,7 @@ namespace
     constexpr int kWindowWidth = 1280;
     constexpr int kWindowHeight = 720;
 
+    constexpr float PI = 3.14159265358979323846f;
     constexpr float kMouseSensitivity = 0.1f;
     constexpr float kMoveSpeed = 5.0f;
 
@@ -42,7 +43,7 @@ namespace
 
     float radians(const float degrees)
     {
-        return degrees * static_cast<float>(M_PI) / 180.0f;
+        return degrees * PI / 180.0f;
     }
 
     void updateCameraVectors(Camera& camera)
