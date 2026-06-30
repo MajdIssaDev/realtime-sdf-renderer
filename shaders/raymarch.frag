@@ -21,14 +21,40 @@ const float kDiffuseStrength  = 0.75;
 const float kSpecularStrength = 0.35;
 const float kShininess        = 64.0;
 
-float sdSphere(vec3 p, float radius)
+float sdBox(vec3 p, vec3 b)
 {
-    return length(p) - radius;
+    vec3 q = abs(p) - b;
+    return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+
+float sdPlane(vec3 p, float h)
+{
+    return p.y - h;
+}
+
+float smin(float a, float b, float k)
+{
+    float h = max(k - abs(a - b), 0.0) / k;
+    return min(a, b) - h * h * h * k * (1.0 / 6.0);
 }
 
 float mapScene(vec3 p)
 {
-    return sdSphere(p - vec3(0.0, 0.0, -5.0), 1.5);
+    float boxDist = sdBox(p, vec3(1.0));
+
+    vec3 sphereCenter = vec3(
+        sin(u_time) * 2.0,
+        0.5 + 0.3 * cos(u_time * 1.5),
+        cos(u_time) * 2.0
+    );
+
+    float sphereDist = length(p - sphereCenter) - 1.0;
+
+    float blendedObject = smin(boxDist, sphereDist, 0.5);
+
+    float floorDist = sdPlane(p, -1.0);
+
+    return min(blendedObject, floorDist);
 }
 
 vec3 getNormal(vec3 p)
